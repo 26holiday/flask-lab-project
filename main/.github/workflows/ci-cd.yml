@@ -1,0 +1,83 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r main/requirements.txt
+      
+      - name: Run unit tests
+        run: |
+          cd main
+          pytest tests/ -v --tb=short
+  
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
+      - name: Build Docker image
+        run: |
+          docker build -t flask-lab-app:latest main/
+      
+      - name: Test Docker container
+        run: |
+          docker run -d -p 5000:5000 --name test-container flask-lab-app:latest
+          sleep 5
+          curl -f http://localhost:5000/health || exit 1
+          docker stop test-container
+          docker rm test-container
+      
+      - name: Log in to Docker Hub (optional)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+        continue-on-error: true
+      
+      - name: Push to Docker Hub (optional)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          docker tag flask-lab-app:latest ${{ secrets.DOCKER_USERNAME }}/flask-lab-app:latest
+          docker push ${{ secrets.DOCKER_USERNAME }}/flask-lab-app:latest
+        continue-on-error: true
+  
+  deploy:
+    name: Deployment Ready
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+      - name: Deployment notification
+        run: |
+          echo "✅ All tests passed and Docker image built successfully!"
+          echo "🚀 Application is ready for deployment"
